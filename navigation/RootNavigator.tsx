@@ -13,6 +13,7 @@ import ProfessionalDashboard from '../screens/professional/ProfessionalDashboard
 import JobDetailScreen from '../screens/professional/JobDetailScreen';
 import ProfileScreen from '../screens/professional/ProfileScreen';
 import EarningsScreen from '../screens/professional/EarningsScreen';
+import CustomerNavigator from './CustomerNavigator';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -53,5 +54,6 @@ function ProfessionalNavigator() {
 export function RootNavigator() {
   const { user, token } = useAuthStore();
 
-  return token && user ? <ProfessionalNavigator /> : <AuthNavigator />;
+  if (!token || !user) return <AuthNavigator />;
+  return user.userType === 'customer' ? <CustomerNavigator /> : <ProfessionalNavigator />;
 }
