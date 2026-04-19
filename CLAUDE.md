@@ -39,19 +39,27 @@ The two client trees are parallel prototypes of the same product, not a shared-c
 - **Auth-gated navigation**: `navigation/RootNavigator.tsx` picks `ProfessionalNavigator` (bottom tabs: Dashboard / Earnings / Profile) vs `AuthNavigator` (Onboarding / Login / Register) purely from `useAuthStore()`'s `token` + `user`. There is no "customer" stack yet even though the auth model supports it.
 - **Auth state**: `services/authStore.ts` is a Zustand store. `App.tsx` reads the JWT from `expo-secure-store` on mount and calls `initialize(token)`, which verifies it against `/api/auth/me`. On 401 anywhere, `services/apiClient.ts` deletes the stored token but does not itself reset the Zustand store — callers/screens see the axios rejection and must handle logout UX.
 - **Two axios clients exist**: `services/apiClient.ts` (configured instance with `baseURL = EXPO_PUBLIC_API_URL`, auth interceptor, 401 handling) and direct `axios.*` calls in `services/authStore.ts` (no baseURL, no interceptor). New code should go through `apiClient`; the raw calls in `authStore` are a known inconsistency.
-- **API base URL**: `https://api.werkspot-challenger.com` (note `.com`, different from the Flutter tree).
+- **API base URL**: `https://api.werkspot-challenger.com` (note `.com`, different from the Flutter tree). Auth endpoints on this tree are `/api/auth/login`, `/api/auth/register`, `/api/auth/me` (the `/api` prefix is in the path, not the base URL).
 
 ### Flutter tree
 
-- **`ApiService` is a singleton** (`lib/services/api_service.dart`) wrapping `package:http` with `FlutterSecureStorage` for the `access_token`. All feature services (`AuthService`, `JobService`, `PaymentService`) construct `ApiService()` and share the singleton — do not instantiate a second one or tokens will drift.
+- **`ApiService` is a singleton** (`lib/services/api_service.dart`) wrapping `package:http` with `FlutterSecureStorage` for the `access_token`. All feature services (`AuthService`, `JobService`, `PaymentService`) construct `ApiService()` and share the singleton — do not instantiate a second one or tokens will drift. Note: `_accessToken` is cached in memory after the first read, so `setToken`/`clearToken` must always go through `ApiService` to stay in sync.
+- **`AuthService` is NOT a singleton** (unlike `ApiService`): each `AuthService()` holds its own `_currentUser`. A login performed in one screen's instance will set the token globally (via `ApiService`) but the `currentUser`/`isAuthenticated` getters on a different `AuthService` instance will still return null. There is no app-wide "current user" yet — add a provider/bloc if you need one.
 - **Error model**: non-2xx responses throw `ApiException(statusCode, message)`; callers are expected to catch this rather than relying on nullable returns.
-- **API base URL**: `https://api.werkspot-challenger.nl/v1` (note `.nl` + `/v1`, different from the RN tree).
+- **API base URL**: `https://api.werkspot-challenger.nl/v1` (note `.nl` + `/v1`, different from the RN tree). Endpoints are plain `/auth/*`, `/jobs/*`, `/payments/*` — no `/api` prefix here (the RN tree does add `/api`).
 - **No state-management library wired up** yet despite `provider` / `flutter_bloc` being in `pubspec.yaml`; screens currently hold their own state and call services directly.
 - **Domain vocabulary is Dutch**: `Job.statusLabel` and `ServiceCategory.defaultCategories()` return Dutch strings (Nieuw, Loodgieter, etc.). Keep user-facing strings in Dutch in this tree.
 
 ### Cross-tree backend contract
 
-The two clients talk to *different* hostnames but assume the same JSON shape: `{ access_token, user }` for auth; job fields use `snake_case` (`customer_id`, `professional_id`, `scheduled_at`, `final_price`). Payments are stored/sent in euro cents (`amount * 100`) from the Flutter `PaymentService`. When changing one client's API contract, check whether the other client needs the same change — nothing enforces parity.
+The two clients talk to *different* hostnames **and disagree on the auth response shape**:
+
+- Flutter (`lib/services/auth_service.dart`) reads `response['access_token']` + `response['user']`.
+- RN (`services/authStore.ts`) reads `response.data.token` + `response.data.user` (the field is `token`, not `access_token`).
+
+So a real backend would need to return both fields, or one of the clients has to change. Assume they will need to align — don't treat either as canonical.
+
+Body/shape conventions that *do* match across trees: job fields use `snake_case` (`customer_id`, `professional_id`, `scheduled_at`, `final_price`, `estimated_price`, `postal_code`); `JobStatus` enum values are sent as `.name` strings (`pending`, `accepted`, `inProgress`, `completed`, `cancelled`, `rejected`). Payments are sent in euro cents (`amount * 100`, rounded) from the Flutter `PaymentService`; the RN tree has no payment code yet. When changing one client's API contract, check whether the other client needs the same change — nothing enforces parity.
 
 ### Research docs
 
