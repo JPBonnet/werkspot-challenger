@@ -1,72 +1,88 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (and subagents) working in this repository.
 
-## Repository Shape
+## Repository shape
 
-This repo is an early-stage prototype for "Werkspot Challenger" — a Dutch handymen marketplace — and contains **three independent trees that share nothing at the code level**:
+This is a **production rebuild** of Werkspot Challenger — a Dutch handymen marketplace designed to beat Werkspot on economics (10% commission, no lead fees), trust (escrow + KvK verification), UX (AI voice / photo / multilingual chat), and the energy-transition vertical.
 
-1. **React Native (Expo) app** at the repo root (`App.tsx`, `navigation/`, `screens/`, `services/`, `package.json`, `app.json`, `tsconfig.json`). Entry point: `App.tsx`.
-2. **Flutter app** under `lib/` with `pubspec.yaml` at the root. Entry point: `lib/main.dart`.
-3. **Product research** under `docs/` — market analysis, competitor research, and the 12-week implementation plan (`MOBILE-APP-IMPLEMENTATION-PLAN.md`).
+Monorepo via **pnpm workspaces + Turborepo**. Flutter sits outside the pnpm graph but is orchestrated via `turbo.json` exec tasks.
 
-The two client trees are parallel prototypes of the same product, not a shared-code setup. They diverge in backend URL, auth storage, state management, and screen layouts — when making a change, pick the tree based on which file you are touching and do not cross-port unless asked. `docs/MOBILE-APP-IMPLEMENTATION-PLAN.md` states Flutter was chosen as the target, but the React Native tree is still present and functional.
+```
+apps/
+  mobile/   Flutter (iOS + Android). Riverpod 2.x + go_router + supabase_flutter.
+  web/      Next.js 15 App Router. Customer web + admin + streaming AI API.
+supabase/   Migrations, Edge Functions (Deno), seed, pgtap tests, config.toml.
+packages/
+  shared-types/   Generated TS + Dart types from Supabase schema.
+  ai-prompts/     Versioned prompt library with cache-key helpers.
+  ai-evals/       Eval datasets + runner.
+  ui-tokens/      Design tokens shared web <-> mobile.
+docs/       PRD, ARCHITECTURE, DATA-MODEL, API-SPEC, AI-*, MONETIZATION, GTM, SECURITY-COMPLIANCE, TESTING-STRATEGY, LAUNCH-CHECKLIST, RUNBOOKS, DESIGN-SYSTEM, ADR/.
+.claude/    Subagent definitions + hooks in settings.json.
+.github/workflows/   CI: web, mobile, supabase (pgtap RLS coverage), security scans.
+```
+
+## Key decisions (see `docs/ADR/`)
+
+- **ADR-0001:** Next.js + Supabase (Postgres + Auth + Storage + Realtime + Edge Functions).
+- **ADR-0002:** Flutter + Riverpod 2.x (drop `provider`, `flutter_bloc`).
+- **ADR-0003:** Stripe Connect Custom + escrow milestones + Instant Payouts.
+- **ADR-0004:** pnpm workspaces + Turborepo.
 
 ## Commands
 
-### React Native (Expo) — run from repo root
+### Root (monorepo)
+- `pnpm install` — install JS deps.
+- `pnpm dev` — Turbo runs web + packages.
+- `pnpm build` / `pnpm test` / `pnpm lint` / `pnpm typecheck`.
+- `pnpm db:start` / `pnpm db:stop` — Supabase local stack.
+- `pnpm db:reset` — drop, re-apply migrations, re-seed.
+- `pnpm db:migrate` — `supabase db push` to linked remote.
+- `pnpm db:types` — regenerate TS + Dart types.
+- `pnpm db:test` — pgtap suite (including `supabase/tests/rls_coverage.sql`).
+- `pnpm ai:evals` — run AI eval suite.
 
-- `npm start` — Expo dev server (Metro)
-- `npm run ios` / `npm run android` / `npm run web` — platform-specific starts
-- `npm test` — Jest (preset `react-native`); `testMatch` is `**/__tests__/**/*.test.ts(x)` — there is no `__tests__/` directory yet, so `npm test` currently finds nothing
-- `npm test -- <pattern>` — run a single test by filename/regex
-- `npm run build:android` / `npm run build:ios` — EAS Build (requires EAS setup and `expo` owner `jpbonnet` per `app.json`)
-- Copy `.env.example` to `.env`; all RN-visible env vars must be prefixed `EXPO_PUBLIC_` (used at runtime via `process.env.EXPO_PUBLIC_*`)
+### Web — `apps/web`
+- `pnpm --filter @werkspot/web dev` — Next.js on http://localhost:3000.
+- `pnpm --filter @werkspot/web build` / `start`.
 
-### Flutter — run from repo root
+### Mobile — `apps/mobile`
+- `pnpm mobile:dev` — `flutter run` on connected device.
+- `pnpm mobile:test` — `flutter test`.
+- `pnpm mobile:analyze` — `flutter analyze`.
+- Env via `--dart-define`: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `STRIPE_PUBLISHABLE_KEY`, `SENTRY_DSN`, `API_BASE_URL`.
 
-- `flutter pub get` — install deps from `pubspec.yaml`
-- `flutter run` — run on the connected device/emulator (entrypoint `lib/main.dart`, which boots straight into `ProfessionalDashboard(professionalId: 'demo-pro-1')`)
-- `flutter test` — run Dart tests (no `test/` directory exists yet)
-- `flutter test test/path/to/foo_test.dart` — single test
-- `flutter analyze` — static analysis (pairs with `flutter_lints` dev dep)
-- `dart run build_runner build --delete-conflicting-outputs` — regenerate `json_serializable` code if/when `.g.dart` files are introduced (none exist today; current models hand-write `fromJson`/`toJson`)
+## Architecture rules of thumb
 
-## Architecture Notes That Span Multiple Files
+- **Data-adjacent + webhooks + cron** → Supabase Edge Functions.
+- **User-facing + streaming AI + admin UI** → Next.js API routes / Server Actions.
+- **Money** is always integer cents.
+- **PII** never leaves EU region; Supabase EU project, EU Vercel edge.
+- **RLS** is mandatory. Every new table must include a policy in the same migration. `supabase/tests/rls_coverage.sql` fails CI otherwise.
+- **Prompt caching** (`anthropic-beta: prompt-caching-2024-07-31`) on every repeated system prompt. Target >70% hit rate.
+- **Feature flags** in `feature_flags` table (mirrored from PostHog) have kill switches on every AI and paid flow.
+- **Commission** is **10%** of GMV, charged at payment release via `application_fee_amount` on Stripe Connect Custom. **No lead fees, ever.**
 
-### React Native tree
+## Subagent orchestration
 
-- **Auth-gated navigation**: `navigation/RootNavigator.tsx` picks `ProfessionalNavigator` (bottom tabs: Dashboard / Earnings / Profile) vs `AuthNavigator` (Onboarding / Login / Register) purely from `useAuthStore()`'s `token` + `user`. There is no "customer" stack yet even though the auth model supports it.
-- **Auth state**: `services/authStore.ts` is a Zustand store. `App.tsx` reads the JWT from `expo-secure-store` on mount and calls `initialize(token)`, which verifies it against `/api/auth/me`. On 401 anywhere, `services/apiClient.ts` deletes the stored token but does not itself reset the Zustand store — callers/screens see the axios rejection and must handle logout UX.
-- **Two axios clients exist**: `services/apiClient.ts` (configured instance with `baseURL = EXPO_PUBLIC_API_URL`, auth interceptor, 401 handling) and direct `axios.*` calls in `services/authStore.ts` (no baseURL, no interceptor). New code should go through `apiClient`; the raw calls in `authStore` are a known inconsistency.
-- **API base URL**: `https://api.werkspot-challenger.com` (note `.com`, different from the Flutter tree). Auth endpoints on this tree are `/api/auth/login`, `/api/auth/register`, `/api/auth/me` (the `/api` prefix is in the path, not the base URL).
+See `docs/AI-AGENT-ORCHESTRATION.md`. Subagents live in `.claude/agents/`:
+`backend-architect`, `mobile-engineer`, `ai-features`, `qa-engineer`, `security-reviewer`, `dutch-copywriter`, `data-migrations`, `release-manager`, `devops`.
 
-### Flutter tree
+Hooks in `.claude/settings.json` auto-regenerate types on SQL edits. Security-review runs before any `git push`.
 
-- **`ApiService` is a singleton** (`lib/services/api_service.dart`) wrapping `package:http` with `FlutterSecureStorage` for the `access_token`. All feature services (`AuthService`, `JobService`, `PaymentService`) construct `ApiService()` and share the singleton — do not instantiate a second one or tokens will drift. Note: `_accessToken` is cached in memory after the first read, so `setToken`/`clearToken` must always go through `ApiService` to stay in sync.
-- **`AuthService` is NOT a singleton** (unlike `ApiService`): each `AuthService()` holds its own `_currentUser`. A login performed in one screen's instance will set the token globally (via `ApiService`) but the `currentUser`/`isAuthenticated` getters on a different `AuthService` instance will still return null. There is no app-wide "current user" yet — add a provider/bloc if you need one.
-- **Error model**: non-2xx responses throw `ApiException(statusCode, message)`; callers are expected to catch this rather than relying on nullable returns.
-- **API base URL**: `https://api.werkspot-challenger.nl/v1` (note `.nl` + `/v1`, different from the RN tree). Endpoints are plain `/auth/*`, `/jobs/*`, `/payments/*` — no `/api` prefix here (the RN tree does add `/api`).
-- **No state-management library wired up** yet despite `provider` / `flutter_bloc` being in `pubspec.yaml`; screens currently hold their own state and call services directly.
-- **Domain vocabulary is Dutch**: `Job.statusLabel` and `ServiceCategory.defaultCategories()` return Dutch strings (Nieuw, Loodgieter, etc.). Keep user-facing strings in Dutch in this tree.
+## Dutch conventions
 
-### Cross-tree backend contract
+- User-facing default tone: **informal "je"** except on legal/payment/identity screens → **formal "u"**.
+- Money formatting: `€ 1.234,56` (nl-NL).
+- Dates: `20-09-2026`.
+- Trade vocabulary in Dutch (Loodgieter, Elektricien, Warmtepomp, CV-ketel, BTW, Offerte, Kwitantie).
+- Glossary authoritative in `docs/DESIGN-SYSTEM.md`.
 
-The two clients talk to *different* hostnames **and disagree on the auth response shape**:
+## Before shipping
 
-- Flutter (`lib/services/auth_service.dart`) reads `response['access_token']` + `response['user']`.
-- RN (`services/authStore.ts`) reads `response.data.token` + `response.data.user` (the field is `token`, not `access_token`).
+Read `docs/LAUNCH-CHECKLIST.md`. The bar is: only remaining step is tapping **Submit for Review** in App Store Connect + Play Console.
 
-So a real backend would need to return both fields, or one of the clients has to change. Assume they will need to align — don't treat either as canonical.
+## Branch convention
 
-Body/shape conventions that *do* match across trees: job fields use `snake_case` (`customer_id`, `professional_id`, `scheduled_at`, `final_price`, `estimated_price`, `postal_code`); `JobStatus` enum values are sent as `.name` strings (`pending`, `accepted`, `inProgress`, `completed`, `cancelled`, `rejected`). Payments are sent in euro cents (`amount * 100`, rounded) from the Flutter `PaymentService`; the RN tree has no payment code yet. When changing one client's API contract, check whether the other client needs the same change — nothing enforces parity.
-
-### Research docs
-
-`docs/` is reference-only product/market material (Werkspot analysis, competitor research, opportunity analysis, 12-week plan). Treat it as context for product decisions, not as a spec that code must match — the code is ahead of or behind the plan in places.
-
-## Conventions
-
-- TypeScript is `strict` with path alias `@/*` → repo root (`tsconfig.json`). `include` lists `app`, `screens`, `services`, `models`, `navigation`, `utils`, `hooks` — a few of those directories (`app`, `models`, `utils`, `hooks`) do not exist yet; creating them is fine.
-- Secrets live in `expo-secure-store` (RN) and `flutter_secure_storage` (Flutter) under the key `authToken` / `access_token` respectively — do not switch to `AsyncStorage` / `SharedPreferences` for tokens.
-- Branch convention for Claude-authored work: develop on the feature branch specified in the task prompt; do not push to `main`.
+Claude-authored work lives on the feature branch named in the task prompt. Never push to `main`.

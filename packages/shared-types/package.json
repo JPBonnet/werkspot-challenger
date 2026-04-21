@@ -1,0 +1,14 @@
+{
+  "name": "@werkspot/shared-types",
+  "private": true,
+  "version": "0.1.0",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "gen": "supabase gen types typescript --local > src/supabase.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,42 @@
+# Node / pnpm / turbo
+node_modules/
+.pnpm-store/
+.turbo/
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Flutter / Dart
+apps/mobile/.dart_tool/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/build/
+apps/mobile/ios/Pods/
+apps/mobile/ios/.symlinks/
+apps/mobile/android/.gradle/
+apps/mobile/android/local.properties
+apps/mobile/**/*.g.dart
+apps/mobile/**/*.freezed.dart
+
+# Supabase
+supabase/.branches/
+supabase/.temp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
