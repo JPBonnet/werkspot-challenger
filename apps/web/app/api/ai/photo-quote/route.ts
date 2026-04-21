@@ -1,3 +1,4 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { anthropic, MODELS } from "@/lib/anthropic";
@@ -53,17 +54,18 @@ export async function POST(req: Request) {
     messages: [
       {
         role: "user",
+        // Anthropic SDK typings for url image source vary by version; cast once.
         content: [
           ...parsed.data.photos.map((url) => ({
-            type: "image" as const,
-            source: { type: "url" as const, url },
+            type: "image",
+            source: { type: "url", url },
           })),
           {
-            type: "text" as const,
+            type: "text",
             text: `Benchmark for buurt: ${JSON.stringify(stats ?? { note: "no local data yet" })}\n\nRespond with JSON only: {min_cents, max_cents, confidence, verify_onsite[]}`,
           },
         ],
-      },
+      } as unknown as Anthropic.MessageParam,
     ],
   });
 
